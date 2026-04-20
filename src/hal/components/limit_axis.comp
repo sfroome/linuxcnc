@@ -58,79 +58,76 @@ pin out bit error-limit-## [10:personality] = 1 "Error bit indicating that the m
 
 ;;
 
+#define STARTUP_DELAY 200.0
+
+static double elapsed_time = 0;
+static int error_count = 0;
+
 FUNCTION(_){
-  int i;
-  // Check sticky bit
-  if(sticky(current_range)){
-    if (min_range(current_range) <= fb &&
-        fb <= max_range(current_range) &&
-        enable(current_range)) {
+    int i;
+    elapsed_time += fperiod;
+    if(elapsed_time >= STARTUP_DELAY) {
+        // Check sticky bit
+        if(sticky(current_range)){
+            if (min_range(current_range) <= fb &&
+                fb <= max_range(current_range) &&
+                enable(current_range)) {
 
-      max_output = max_limit(current_range);
-      min_output = min_limit(current_range);
+                max_output = max_limit(current_range);
+                min_output = min_limit(current_range);
+                error_no_range = 0;
+                return;
+            }
+        }
 
-      return;
+        // Check all ranges
+        for (i = 0; i < personality; i++){
+                if(!enable(i)) continue;
+
+                // Check range settings
+                if (max_range(i) < min_range(i)){
+                    if (!error_range(i) ){
+                        rtapi_print_msg(RTAPI_MSG_ERR, "limit_axis: Error in limit settings! Range %d Min > Max\n", i);
+                        error_range(i) = 1;
+                    }
+                    continue;
+                }
+                error_range(i) = 0;
+
+                // Check limit settings
+                if (max_limit(i) < min_limit(i)){
+                    if (!error_limit(i)){
+                        rtapi_print_msg(RTAPI_MSG_ERR, "limit_axis: Error in limit settings! Limit %d Min > Max\n", i);
+                        error_limit(i) = 1;
+                    }
+                    continue;
+                }
+                error_limit(i) = 0;
+
+                // Logic to select the range
+                if(min_range(i) <= fb && fb <= max_range(i)) {
+                    max_output = max_limit(i);
+                    min_output = min_limit(i);
+
+                    if (i != (int)current_range){
+                        rtapi_print_msg(RTAPI_MSG_INFO, "limit_axis: Range %d active\n", i);
+                        current_range = i;
+                    }
+                    error_count = 0;
+                    error_no_range = 0;
+                    return;
+                }
+        }
+        // Fallthrough: No valid range found
+        if (!error_no_range) {
+            error_no_range = 1;
+            // Only print if we haven't already and it's been at least 2 seconds since component loaded
+                error_count++;
+                if(error_count > 10){
+                    rtapi_print_msg(RTAPI_MSG_ERR, "limit_axis: No valid range for feedback: %f\n", fb);
+                }
+        }
     }
-  }
-
-  // Check all ranges
-  for (i = 0; i < personality; i++){
-    if(! enable(i)){
-      continue;
-    }
-
-    if (max_range(i) < min_range(i)){
-      // Throw Error and skip this range
-      if (! error_range(i) ){
-        rtapi_print_msg(RTAPI_MSG_ERR,
-                        "limit_axis: Error in range %d settings! Min: %f > Max: %f \n",
-                        i,
-                        max_range(i),
-                        min_range(i));
-        error_range(i) = 1;
-      }
-      continue;
-    }
-    // If we made it to here clear the error
-    error_range(i) = 0;
-
-    if (max_limit(i) < min_limit(i)){
-      // Throw Error and skip this range
-      if (! error_limit(i)){
-        rtapi_print_msg(RTAPI_MSG_ERR,
-                        "limit_axis: Error in limit %d settings! Min: %f > Max: %f \n",
-                        i,
-                        max_limit(i),
-                        min_limit(i));
-        error_limit(i) = 1;
-      }
-      continue;
-    }
-    // If we made it to here clear the error
-    error_limit(i) = 0;
-
-    // Check position, take first range that it fits in.
-    if(min_range(i) <= fb && fb <= max_range(i)) {
-      max_output = max_limit(i);
-      min_output = min_limit(i);
-      // Found our limits, stop looking
-      error_no_range = 0;
-      if (i != (int)current_range){
-        rtapi_print_msg(RTAPI_MSG_INFO, "limit_axis: Switching to Range %d\n", i);
-        current_range = i;
-      }
-      return;
-    }
-  }
-
-  // If we've looked through all our ranges, then it's not there
-  if (!error_no_range){
-    error_no_range = 1;
-    rtapi_print_msg(RTAPI_MSG_ERR,
-                    "limit_axis: No Range found corresponding to feedback");
-
-  }
-
 }
 
 EXTRA_SETUP(){
